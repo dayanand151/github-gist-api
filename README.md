@@ -1,43 +1,93 @@
-## :warning: Please read these instructions carefully and entirely first
-* Clone this repository to your local machine.
-* Use your IDE of choice to complete the assignment.
-* When you have completed the assignment, you need to  push your code to this repository and [mark the assignment as completed by clicking here](https://app.snapcode.review/submission_links/99fb0edd-c843-4902-9894-f3ba010a87bc).
-* Once you mark it as completed, your access to this repository will be revoked. Please make sure that you have completed the assignment and pushed all code from your local machine to this repository before you click the link.
+# Gists API
 
-## Operability Take-Home Exercise
+This is a small HTTP API. You pass a GitHub username in the URL and it comes back with that user's public gists.
 
-Welcome to the start of our recruitment process for Operability Engineers. It was great to speak to you regarding an opportunity to join the Equal Experts network!
+`GET /octocat` calls GitHub (`GET /users/octocat/gists`) and returns the JSON list as-is. There is also `GET /health` so you can see the process is up.
 
-Please write code to deliver a solution to the problems outlined below.
+Nothing is stored here. GitHub is the source of the data.
 
-We appreciate that your time is valuable and do not expect this exercise to **take more than 90 minutes**. If you think this exercise will take longer than that, I **strongly** encourage you to please get in touch to ask any clarifying questions.
+## What I used
 
-### Submission guidelines
-**Do**
-- Provide a README file in text or markdown format that documents a concise way to set up and run the provided solution.
-- Take the time to read any applicable API or service docs, it may save you significant effort.
-- Make your solution simple and clear. We aren't looking for overly complex ways to solve the problem since in our experience, simple and clear solutions to problems are generally the most maintainable and extensible solutions.
+| Thing | Version | What for |
+|---|---|---|
+| Python | 3.12 (in the image) | language |
+| Flask | 3.1.2 | HTTP routes |
+| requests | 2.32.5 | calling GitHub |
+| gunicorn | 23.0.0 | serves the app in Docker |
+| pytest | 8.4.2 | tests |
 
-**Don't**
+Versions are pinned in `requirements.txt`.
 
-Expect the reviewer to dedicate a machine to review the test by:
+## Run it locally
 
-- Installing software globally that may conflict with system software
-- Requiring changes to system-wide configurations
-- Providing overly complex solutions that need to spin up a ton of unneeded supporting dependencies. We aspire to keep our dev experiences as simple as possible (but no simpler)!
-- Include identifying information in your submission. We are endeavouring to make our review process anonymous to reduce bias.
+Use a venv so you don't install packages on the system Python.
 
-### Exercise
-If you have any questions on the below exercise, please do get in touch and we’ll answer as soon as possible.
+```bash
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
 
-#### Build an API, test it, and package it into a container
-- Build a simple HTTP web server API in any general-purpose programming language[^1] that interacts with the GitHub API and responds to requests on `/<USER>` with a list of the user’s publicly available Gists[^2].
-- Create an automated test to validate that your web server API works. An example user to use as test data is `octocat`.
-- Package the web server API into a docker container that listens for requests on port `8080`. You do not need to publish the resulting container image in any container registry, but we are expecting the Dockerfile in the submission.
-- The solution may optionally provide other functionality (e.g. pagination, caching) but the above **must** be implemented.
+That starts Flask on http://127.0.0.1:8080. In another terminal:
 
-Best of luck,  
-Equal Experts
-__________________________________________
-[^1]: For example Go, Python or Ruby but not Bash or Powershell.  
-[^2]: https://docs.github.com/en/rest/gists/gists?apiVersion=2022-11-28
+```bash
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/octocat
+```
+
+Ctrl+C stops it.
+
+Tests (venv still on):
+
+```bash
+pytest
+```
+
+They mock GitHub, so they don't need the network.
+
+## Dockerfile
+
+Two stages.
+
+**Builder** — `python:3.12-slim`, make a venv at `/venv`, `pip install -r requirements.txt`.
+
+**Final image** — another slim Python. Copy the venv over, then `app.py` and `github_client.py`. Create `appuser` and switch to that user so gunicorn isn't root.
+
+`EXPOSE 8080` is just documentation. The real listen address is in `CMD`: gunicorn on `0.0.0.0:8080`. Has to be `0.0.0.0` or you can't reach it from outside the container.
+
+`.dockerignore` keeps `.venv`, tests and `.git` out of the build.
+
+## Build the image
+
+From this folder:
+
+```bash
+docker build -t gists-api .
+```
+
+## Run the image
+
+```bash
+docker run --rm -p 8080:8080 gists-api
+```
+
+`-p 8080:8080` is host port → container port. `--rm` deletes the container when you stop it.
+
+```bash
+curl http://localhost:8080/octocat
+curl http://localhost:8080/health
+```
+
+If 8080 is already in use on your machine:
+
+```bash
+docker run --rm -p 8081:8080 gists-api
+curl http://localhost:8081/octocat
+```
+
+If you have a GitHub token (optional, helps with rate limits):
+
+```bash
+docker run --rm -p 8080:8080 -e GITHUB_TOKEN=your_token gists-api
+```
