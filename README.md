@@ -46,48 +46,60 @@ pytest
 
 They mock GitHub, so they don't need the network.
 
-## Dockerfile
+## Dockerfiles
 
-Two stages.
+There are two files. Both are two-stage builds on `python:3.12-slim`.
 
-**Builder** — `python:3.12-slim`, make a venv at `/venv`, `pip install -r requirements.txt`.
+**`Dockerfile`** — simple one. Builder makes a venv and installs `requirements.txt`. Final image copies the venv, `app.py` and `github_client.py`, then runs gunicorn as `appuser`.
 
-**Final image** — another slim Python. Copy the venv over, then `app.py` and `github_client.py`. Create `appuser` and switch to that user so gunicorn isn't root.
+**`Dockerfile.secure`** — same app, tighter runtime. User `appuser` (uid 10001) is in `appgroup`, has no home and no login shell (`/usr/sbin/nologin`). App files stay root-owned and are not writable. There is a health check on `/health`.
 
-`EXPOSE 8080` is just documentation. The real listen address is in `CMD`: gunicorn on `0.0.0.0:8080`. Has to be `0.0.0.0` or you can't reach it from outside the container.
+`EXPOSE 8080` is just documentation. Gunicorn actually listens on `0.0.0.0:8080`. It has to be `0.0.0.0` or you can't reach it from outside the container.
 
 `.dockerignore` keeps `.venv`, tests and `.git` out of the build.
 
-## Build the image
+## Build and run
 
 From this folder:
 
 ```bash
 docker build -t gists-api .
-```
-
-## Run the image
-
-```bash
 docker run --rm -p 8080:8080 gists-api
 ```
 
 `-p 8080:8080` is host port → container port. `--rm` deletes the container when you stop it.
 
+Secure image (read-only disk, `/tmp` in memory, no extra Linux capabilities):
+
 ```bash
-curl http://localhost:8080/octocat
-curl http://localhost:8080/health
+docker build -f Dockerfile.secure -t gists-api:secure .
+docker run --rm --read-only --tmpfs /tmp \
+  --cap-drop ALL --security-opt no-new-privileges \
+  -p 8080:8080 gists-api:secure
 ```
 
-If 8080 is already in use on your machine:
+```bash
+curl http://localhost:8080/health
+curl http://localhost:8080/octocat
+```
+
+If 8080 is already in use:
 
 ```bash
 docker run --rm -p 8081:8080 gists-api
 curl http://localhost:8081/octocat
 ```
 
-If you have a GitHub token (optional, helps with rate limits):
+GitHub token (optional, helps with rate limits):
 
 ```bash
 docker run --rm -p 8080:8080 -e GITHUB_TOKEN=your_token gists-api
 ```
+
+## CI
+
+On push to `solution`, GitHub Actions runs the tests (with coverage), builds the image, scans it with Trivy, then pushes it to Docker Hub.
+
+Coverage (`coverage.xml`, `htmlcov/`) and the Trivy report are uploaded as workflow artifacts.
+
+You need two repo secrets: `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN`.
